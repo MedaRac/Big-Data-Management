@@ -1,0 +1,164 @@
+USE atp;
+
+UPDATE Players
+SET Born = CASE 
+             WHEN Born = 'Islamic Republic of' THEN 'Islamic Republic of Iran'
+             WHEN Born = 'Republic of' THEN 'Unknown'
+             WHEN Born = 'Unknown Country' THEN 'Unknown'
+             WHEN Born = 'Venezuela' THEN 'Bolivarian Republic of Venezuela'
+           END
+WHERE Born IN ('Islamic Republic of', 'Republic of', 'Unknown Country','Venezuela');
+
+UPDATE Tournament
+SET Location = 'Bolivarian Republic of Venezuela'
+WHERE Location = 'Venezuela';
+
+UPDATE Games
+SET Location = 'Bolivarian Republic of Venezuela'
+WHERE Location = 'Venezuela';
+
+DELETE FROM Tournament
+WHERE TournamentName = 'Aix en Provence' AND Location = 'France'
+LIMIT 1;
+
+DELETE FROM Tournament
+WHERE TournamentName = 'M25 Jablonec nad Nisou' AND Location = 'Czech Republic'
+LIMIT 1;
+
+DELETE FROM Tournament
+WHERE TournamentName = 'M25 Santa Margherita Di Pula' AND Location = 'Italy'
+LIMIT 1;
+
+DELETE FROM Tournament
+WHERE TournamentName = 'Mar Del Plata' AND Location = 'Argentina'
+LIMIT 1;
+
+DELETE FROM Tournament
+WHERE TournamentName = 'Mouilleron Le Captif' AND Location = 'France'
+LIMIT 1;
+
+DELETE FROM Tournament
+WHERE TournamentName = 'Punta Del Este' AND Location = 'Uruguay'
+LIMIT 1;
+
+DELETE FROM Tournament
+WHERE TournamentName = 'Rio de Janeiro' AND Location = 'Brazil'
+LIMIT 1;
+
+DELETE FROM Tournament
+WHERE TournamentName = 'Vina Del Mar' AND Location = 'Chile'
+LIMIT 1;
+
+ALTER TABLE `Countries and Locations` ADD PRIMARY KEY(`Countries and Locations`);
+
+ALTER TABLE `Players` ADD PRIMARY KEY(`LinkPlayer`);
+
+ALTER TABLE `Players` ADD CONSTRAINT `fk_Born` FOREIGN KEY (`Born`) REFERENCES `Countries and Locations`(`Countries and Locations`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE `Tournament` ADD PRIMARY KEY(`TournamentName`, `Location`);
+
+ALTER TABLE `Tournament` ADD CONSTRAINT `fk_Location` FOREIGN KEY (`Location`) REFERENCES `Countries and Locations`(`Countries and Locations`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE `Games` ADD PRIMARY KEY(`LinkPlayer`, `OpponentName`, `Tournament`, `Location`, `StartDate`, `EndDate`);
+
+ALTER TABLE `Games` ADD CONSTRAINT `fk_LinkPlayer` FOREIGN KEY (`LinkPlayer`) REFERENCES `Players`(`LinkPlayer`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE `Games` ADD CONSTRAINT `fk_Tournament` FOREIGN KEY (`Tournament`) REFERENCES `Tournament`(`TournamentName`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE `Games` ADD CONSTRAINT `fk_GameLocation` FOREIGN KEY (`Location`) REFERENCES `Tournament`(`Location`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+CREATE INDEX idx_countries_locations_name ON `Countries and Locations` (`Countries and Locations`);
+CREATE INDEX idx_tournament_location_name ON Tournament (Location, TournamentName);
+CREATE INDEX idx_players_link_born ON Players (LinkPlayer, Born, PlayerName, Used_Hand);
+CREATE INDEX idx_games_link_wl_date ON Games (LinkPlayer, WL, StartDate, EndDate, Tournament, Ground);
+CREATE INDEX idx_games_unique_identifier ON Games (LinkPlayer, OpponentName, Tournament, Location, StartDate, EndDate);
+CREATE INDEX idx_games_ground ON Games (Ground);
+
+WITH PlayerCounts AS (
+    SELECT 
+        c.`Countries and Locations` AS CountryName,
+        COUNT(DISTINCT p.LinkPlayer) AS TotalPlayers
+    FROM `Countries and Locations` c
+    JOIN Players p ON c.`Countries and Locations` = p.Born
+    GROUP BY c.`Countries and Locations`
+),
+TournamentCounts AS (
+    SELECT 
+        c.`Countries and Locations` AS CountryName,
+        COUNT(DISTINCT t.TournamentName) AS TotalTournaments
+    FROM `Countries and Locations` c
+    JOIN Tournament t ON c.`Countries and Locations` = t.Location
+    GROUP BY c.`Countries and Locations`
+),
+RoundCounts AS (
+    SELECT 
+        c.`Countries and Locations` AS CountryName,
+        COUNT(DISTINCT 
+            LEAST(g.LinkPlayer, g.OpponentName), 
+            GREATEST(g.LinkPlayer, g.OpponentName),
+            g.Tournament,
+            g.Location,
+            g.StartDate,
+            g.EndDate
+        ) AS TotalRounds
+    FROM `Countries and Locations` c
+    JOIN Games g ON c.`Countries and Locations` = g.Location
+    GROUP BY c.`Countries and Locations`
+)
+SELECT 
+    c.`Countries and Locations` AS CountryName,
+    COALESCE(pc.TotalPlayers, 0) AS TotalPlayers,
+    COALESCE(tc.TotalTournaments, 0) AS TotalTournaments,
+    COALESCE(rc.TotalRounds, 0) AS TotalRounds
+FROM `Countries and Locations` c
+LEFT JOIN PlayerCounts pc ON c.`Countries and Locations` = pc.CountryName
+LEFT JOIN TournamentCounts tc ON c.`Countries and Locations` = tc.CountryName
+LEFT JOIN RoundCounts rc ON c.`Countries and Locations` = rc.CountryName
+ORDER BY CountryName;
+
+SELECT SUM(TotalGames) / NULLIF(SUM(ActiveYears), 0) AS OverallAvgGamesPerYear
+FROM (SELECT p.PlayerName,
+        COUNT(g.WL) AS TotalGames,
+        (YEAR(MAX(g.StartDate)) - YEAR(MIN(g.StartDate)) + 1) AS ActiveYears
+    FROM Players p
+    JOIN Games g ON p.LinkPlayer = g.LinkPlayer
+    GROUP BY p.PlayerName) AS PlayerStats;
+
+SELECT p.PlayerName,
+    ROUND((SUM(CASE WHEN g.WL = 'W' THEN 1 ELSE 0 END) / COUNT(g.WL)) * 100, 2) AS WinPercentage,
+    COUNT(g.WL) AS TotalGames,
+    (YEAR(MAX(g.StartDate)) - YEAR(MIN(g.StartDate)) + 1) AS ActiveYears,
+    ROUND(COUNT(g.WL) / NULLIF((YEAR(MAX(g.StartDate)) - YEAR(MIN(g.StartDate)) + 1), 0), 2) AS AvgGamesPerYear
+FROM Players p
+JOIN Games g ON p.LinkPlayer = g.LinkPlayer
+GROUP BY p.PlayerName
+HAVING COUNT(g.WL) >= 17 
+ORDER BY WinPercentage DESC
+LIMIT 10;
+
+SELECT p.PlayerName,
+    ROUND((SUM(CASE WHEN g.WL = 'W' THEN 1 ELSE 0 END) / COUNT(g.WL)) * 100, 2) AS WinPercentage,
+    COUNT(g.WL) AS TotalGrandSlamGames,
+    (YEAR(MAX(g.StartDate)) - YEAR(MIN(g.StartDate)) + 1) AS ActiveYears,
+    ROUND(COUNT(g.WL) / NULLIF((YEAR(MAX(g.StartDate)) - YEAR(MIN(g.StartDate)) + 1), 0), 2) AS AvgGrandSlamGamesPerYear
+FROM Players p
+JOIN Games g ON p.LinkPlayer = g.LinkPlayer
+WHERE p.Used_Hand = 'Left-Handed' 
+AND (g.Tournament = 'Australian Open'
+OR g.Tournament = 'Wimbledon'
+OR g.Tournament = 'French Open'
+OR g.Tournament = 'US Open')
+GROUP BY p.PlayerName
+HAVING COUNT(g.WL) >= 17
+ORDER BY WinPercentage DESC
+LIMIT 10;
+
+SELECT p.PlayerName,
+    ROUND((SUM(CASE WHEN g.WL = 'W' THEN 1 ELSE 0 END) / COUNT(g.WL)) * 100, 2) AS WinPercentage
+FROM Players p
+JOIN Games g ON p.LinkPlayer = g.LinkPlayer
+WHERE g.Ground = 'Hard'
+GROUP BY p.PlayerName
+HAVING COUNT(g.WL) >= 17
+ORDER BY WinPercentage DESC
+LIMIT 5;
